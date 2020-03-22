@@ -297,8 +297,8 @@ class GaussianSimulator:
 
         # position step
         if self.iter == 0:
-            self.xt = np.random.randint(750, 1250, size=(self.n_objects, 1), dtype=np.int)
-            self.yt = np.random.randint(750, 1250, size=(self.n_objects, 1), dtype=np.int)
+            self.xt = np.random.randint(900, 1000, size=(self.n_objects, 1), dtype=np.int)
+            self.yt = np.random.randint(900, 1000, size=(self.n_objects, 1), dtype=np.int)
             self.xm, self.ym = self.xt + x_noise, self.yt + y_noise
         else:
             self.xt += np.round(self.vx + 0.5 * ax).astype(np.int)
@@ -348,14 +348,14 @@ class GaussianSimulator:
                     ym_queue.popleft()
 
                 if len(xm_queue) > 2 * n_samples:
-                    x1_sum = np.zeros_like(xm_queue[0])
-                    x2_sum = np.zeros_like(x1_sum)
-                    y1_sum = np.zeros_like(ym_queue[0])
-                    y2_sum = np.zeros_like(y1_sum)
+                    x1_sum = np.zeros_like(xm_queue[0], dtype=np.int)
+                    x2_sum = np.zeros_like(x1_sum, dtype=np.int)
+                    y1_sum = np.zeros_like(ym_queue[0], dtype=np.int)
+                    y2_sum = np.zeros_like(y1_sum, dtype=np.int)
                     x_stack = []
                     y_stack = []
-                    k = 0
 
+                    k = 0
                     while k < n_samples and len(xm_queue) > 0:
                         x1 = xm_queue.popleft()
                         y1 = ym_queue.popleft()
@@ -363,19 +363,24 @@ class GaussianSimulator:
                         y_stack.append(y1)
                         x1_sum += x1
                         y1_sum += y1
+                        k += 1
+
                     x1 = x1_sum / 5
                     y1 = y1_sum / 5
                     while len(x_stack) > 0:
                         xm_queue.appendleft(x_stack.pop())
                         ym_queue.appendleft(y_stack.pop())
 
+                    k = 0
                     while k < n_samples and len(xm_queue) > 0:
                         x2 = xm_queue.pop()
                         y2 = ym_queue.pop()
-                        x_stack.append(x1)
-                        y_stack.append(y1)
+                        x_stack.append(x2)
+                        y_stack.append(y2)
                         x2_sum += x2
                         y2_sum += y2
+                        k += 1
+
                     x2 = x2_sum / 5
                     y2 = y2_sum / 5
                     while len(x_stack) > 0:
@@ -424,14 +429,14 @@ class GaussianSimulator:
 
     def show(self, xm, ym, xt, yt, xkf, ykf):
 
-        img = np.zeros((2000, 2000, 3), dtype=np.uint8)
+        img = np.zeros((2048, 2048, 3), dtype=np.uint8)
         for obj_id in range(self.n_objects):
             xmi, ymi = xm[obj_id], ym[obj_id]
             xti, yti = xt[obj_id], yt[obj_id]
             xkfi, ykfi = int(xkf[obj_id][0]), int(ykf[obj_id][0])
-            cv.drawMarker(img, (xmi, ymi), color=(255, 0, 0), markerType=cv.MARKER_STAR)
-            cv.drawMarker(img, (xti, yti), color=(0, 255, 0), markerType=cv.MARKER_CROSS)
-            cv.drawMarker(img, (xkfi, ykfi), color=(0, 0, 255), markerType=cv.MARKER_DIAMOND)
+            cv.drawMarker(img, (ymi, xmi), color=(255, 0, 0), markerType=cv.MARKER_STAR)
+            cv.drawMarker(img, (yti, xti), color=(0, 255, 0), markerType=cv.MARKER_CROSS)
+            cv.drawMarker(img, (ykfi, xkfi), color=(0, 0, 255), markerType=cv.MARKER_DIAMOND)
             # print(xkfi - xmi, ykfi - ymi)
 
         cv.imshow("im", img)
@@ -441,6 +446,10 @@ class GaussianSimulator:
         return True
 
 
-simulator = GaussianSimulator(1, p=25, q=0.25, r=20, vx=5, vy=5, ax=0.25, ay=0.25, m_var=30, v_var=0.5, a_var=0.125,
-                              acc=True)
-simulator.simulate(False, 1200, filtering=True, lag=10, n_samples=5)
+simulator = GaussianSimulator(1, p=25, q=0.25, r=20, vx=3, vy=3, ax=0.25, ay=0.25, m_var=30, v_var=0.3,
+                              a_var=0.125, acc=False)
+simulator.simulate(False, 600, filtering=True, lag=10, n_samples=5)
+
+
+
+
