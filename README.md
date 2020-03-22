@@ -1,2 +1,2 @@
 # KalmanFilter-Object-Trakcing-Simulator-Python
-An highly paralleled implementation of Kalman Filter and Object Tracking simulator
+An highly vectorized implementation of Kalman Filter and Object Tracking simulator
