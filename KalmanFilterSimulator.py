@@ -56,12 +56,14 @@ class KalmanFilterMotion:
     P(x_t_prior) ~ P(x_t|x_t-1, u_t)P(x_t-1)
     $Measurement$
     z_t = H.x_t_prior + v, v ~ N(0, R)
-    P(z_t) ~ P(z_t|x_t_prior)P(x_t_prior)
+    P(z_t) ~ N(H.x_t_prior, R)
 
     Algorithm Essence
     - recursion
     - AN(u, s) ~ N(Au, AsA)
-    - N(u1, s1)N(u2, s2) ~ N(u1 + K(u2-u1), s1 - Ks2) K is the Kalman gain K = s2/(s1 + s2)
+    - N(u1, s1)N(u2, s2) ~ N(u1 + K(u2-u1), s1 - KHs1) K is the Kalman gain K = s1/(s1 + s2)
+    - Considering the scaling factor H
+    - N(u1, s1)N(u2, s2) ~ N(u1 + K(u2-Hu1), s1 - KHs1) K is the Kalman gain K = s1H/(Hs1H + s2)
     """
 
     def __init__(self, n_objects, A, B, H, Q, R, P_0_batch, X_0_batch, verbose=False):
@@ -176,7 +178,7 @@ class KalmanFilterMotion:
         """
         Correction using the measurement
         z_t = H.x_t_prior + v, v ~ N(0, R)
-        P(z_t|x_t) ~ N(x_prior, p_prior + R)
+        P(z_t|x_t) ~ N(Hx_prior, R)
         P(x_t|..) ~ P(z_t|x_t)P(x_t|x_t-1, u_t)P(x_t) ~ P(z_t|x_t)P(x_t_prior)
 
         Product of two Gaussian
@@ -201,13 +203,16 @@ class KalmanFilterMotion:
         # posterior mean
         # X_post = X_prior + K @ (Z - HX_prior)
         HX = np.einsum('ij,bjk->bik', self.H, self.X_prior_batch)
-        self.X_post_batch = self.X_prior_batch + np.einsum('bij,bjk->bik', K_batch, (Z_batch - HX))
-
-        # posterior var
-        # P_post = (I - KH) @ P_prior
-        I = np.identity(self.size)
-        KH = np.einsum('bij,jk->bik', K_batch, self.H)
-        self.P_post_batch = np.einsum('bij,bjk->bik', (I - KH), self.P_prior_batch)
+        if Z_batch is None:  # if no measurement, just use the prior as posterior prediction
+            self.X_post_batch = self.X_prior_batch
+            self.P_post_batch = self.P_prior_batch
+        else:
+            self.X_post_batch = self.X_prior_batch + np.einsum('bij,bjk->bik', K_batch, (Z_batch - HX))
+            # posterior var
+            # P_post = (I - KH) @ P_prior
+            I = np.identity(self.size)
+            KH = np.einsum('bij,jk->bik', K_batch, self.H)
+            self.P_post_batch = np.einsum('bij,bjk->bik', (I - KH), self.P_prior_batch)
 
         if self.verbose:
             print("Posterior State Estimation Mean: \n{}".format(self.X_post_batch[0]))
@@ -254,7 +259,8 @@ class GaussianSimulator:
         self.v_var = v_var
         self.a_var = a_var
         self.n_objects = n_objects
-        self.history = {'xm': [], 'xt': [], 'ym': [], 'yt': []}
+        self.history = {'xm': [], 'ym': [], 'xt': [], 'yt': [], 'xkf': [], 'ykf': [],
+                        'vxm': [], 'vym': [], 'vxt': [], 'vyt': [], 'vxkf': [], 'vykf': []}
         self.reset()
 
     def reset(self):
@@ -269,7 +275,8 @@ class GaussianSimulator:
         self.vy = np.random.choice([-1, 1], p=[0.5, 0.5], size=(self.n_objects, 1)) * vy
         self.ax = np.random.choice([-1, 1], p=[0.5, 0.5], size=(self.n_objects, 1)) * ax
         self.ay = np.random.choice([-1, 1], p=[0.5, 0.5], size=(self.n_objects, 1)) * ay
-        self.history = {'xm': [], 'xt': [], 'ym': [], 'yt': [], 'vxt': [], 'vyt': [], 'vxm': [], 'vym': []}
+        self.history = {'xm': [], 'ym': [], 'xt': [], 'yt': [], 'xkf': [], 'ykf': [],
+                        'vxm': [], 'vym': [], 'vxt': [], 'vyt': [], 'vxkf': [], 'vykf': []}
         self.iter = 0
 
     def step(self):
@@ -306,27 +313,33 @@ class GaussianSimulator:
 
         # measurement step
         self.xm, self.ym = self.xt + x_noise, self.yt + y_noise
-        self.log()
         self.iter += 1
         # print(self.xm-self.xt, self.ym-self.yt)
         return self.xm, self.ym, self.xt, self.yt, self.vx, self.vy
 
-    def log(self):
-        self.history['xt'].append(self.xt)
-        self.history['yt'].append(self.yt)
-        self.history['xm'].append(self.xm)
-        self.history['ym'].append(self.ym)
-        self.history['vxt'].append(self.vx)
-        self.history['vyt'].append(self.vy)
+    def log(self, xt, yt, xm, ym, xkf, ykf, vxt, vyt, vxm, vym, vxkf, vykf):
+        self.history['xt'].append(xt)
+        self.history['yt'].append(yt)
+        self.history['xm'].append(xm)
+        self.history['ym'].append(ym)
+        self.history['xkf'].append(xkf)
+        self.history['ykf'].append(ykf)
+        self.history['vxt'].append(vxt)
+        self.history['vyt'].append(vyt)
+        self.history['vym'].append(vym)
+        self.history['vxm'].append(vxm)
+        self.history['vxkf'].append(vxkf)
+        self.history['vykf'].append(vykf)
 
-    def simulate(self, know_v, n_iters, filtering=True, lag=10, n_samples=5):
+    def simulate(self, know_v, n_iters, filtering=True, lag=10, n_samples=5, occlusion=False):
         """
         Show simulation
         :param know_v: whether v is known or need to be estimated by pos estimation
         :param n_iters: number of iteration
         :param filtering: whether apply filter
-        :param lag: lag for measure velocity
+        :param lag: lag for measure velocity, i.e. total samples = (lag + 1) * n_samples
         :param n_samples: num of samples for averaging the position for velocity measurement
+        :param occlusion: simulate occlusion
         :return:
         """
 
@@ -343,7 +356,7 @@ class GaussianSimulator:
             if know_v:
                 vxm, vym = vxt, vyt
             else:  # estimate v using the measured position
-                if len(xm_queue) > lag * n_samples:
+                if len(xm_queue) > (lag + 1) * n_samples:
                     xm_queue.popleft()
                     ym_queue.popleft()
 
@@ -390,13 +403,13 @@ class GaussianSimulator:
                     # x1, y1 is the averaged location of the first five measured position
                     # x2, y2 is the averaged location of the last five measured position
                     # speed measurement is debiased
-                    vxm, vym = (x2 - x1) / (len(xm_queue) - n_samples//2), (y2 - y1) / (len(ym_queue) - n_samples//2)
+                    vxm, vym = (x2 - x1) / (len(xm_queue) - n_samples/2), (y2 - y1) / (len(ym_queue) - n_samples/2)
 
                 else:  # at the beginning, the v measurement is not stable
                     vxm, vym = (xm_queue[-1] - xm_queue[0]) / len(xm_queue), (ym_queue[-1] - ym_queue[0]) / len(ym_queue)
 
             # skip the first input for initialize
-            if i < n_samples*lag:
+            if i < 1:
                 continue
             if i == n_samples*lag and filtering:
                 # P0 X0 batch
@@ -413,19 +426,29 @@ class GaussianSimulator:
             if i > n_samples*lag:
                 if filtering:
                     # measurement batch tensor
-                    Z_batch = np.hstack((xm, ym, vxm, vym))[:, :, np.newaxis]
+                    if occlusion and 100 < i < 200:
+                        Z_batch = None
+                    else:
+                        Z_batch = np.hstack((xm, ym, vxm, vym))[:, :, np.newaxis]
                     X_post_batch, P_post_batch = KFfilter.filter(measurement=Z_batch, control=None)  # Nx4x1
                     xkf = X_post_batch[:, 0]
                     ykf = X_post_batch[:, 1]
+                    vxkf = X_post_batch[:, 2]
+                    vykf = X_post_batch[:, 3]
+                    # print((vxkf - vxt).mean(), (vykf - vyt).mean())
+                    # print((vxkf - vxm).mean(), (vykf - vym).mean())
+                    # print((vxm - vxt).mean(), (vym - vyt).mean())
                 else:
                     xkf = np.zeros_like(xm)
                     ykf = np.zeros_like(ym)
+                    vxkf = np.zeros_like(xm)
+                    vykf = np.zeros_like(ym)
+                self.log(xt, yt, xm, ym, xkf, ykf, vxt, vyt, vxm, vym, vxkf, vykf)
                 if self.show(xm, ym, xt, yt, xkf, ykf):
                     continue
                 else:
                     break
         cv.destroyAllWindows()
-        self.reset()
 
     def show(self, xm, ym, xt, yt, xkf, ykf):
 
@@ -445,10 +468,10 @@ class GaussianSimulator:
             return False
         return True
 
-
-simulator = GaussianSimulator(1, p=25, q=0.25, r=20, vx=3, vy=3, ax=0.25, ay=0.25, m_var=30, v_var=0.3,
-                              a_var=0.125, acc=False)
-simulator.simulate(False, 600, filtering=True, lag=10, n_samples=5)
+#
+# simulator = GaussianSimulator(100, p=10, q=0.1, r=1000, vx=2, vy=2, ax=0, ay=0, m_var=0, v_var=0,
+#                               a_var=0, acc=False)
+# simulator.simulate(True, 600, filtering=True, lag=1, n_samples=1)
 
 
 
